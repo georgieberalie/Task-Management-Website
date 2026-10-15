@@ -70,31 +70,31 @@ export const INITIAL_TEMPLATES: Template[] = [
   {
     id: 'tmpl_scrum',
     name: 'Agile Sprint Board',
-    description: 'Sprint planning workflow with Backlog, Sprint Backlog, In Development, QA & Testing, and Released.',
+    description: 'Sprint planning workflow with Tasks, In Development, Testing & Review, and Done.',
     category: 'Engineering',
-    lists: ['Backlog', 'Sprint Backlog', 'In Development', 'Testing / Review', 'Done'],
+    lists: ['Tasks', 'In Development', 'Testing / Review', 'Done'],
     sampleCards: [
       {
         title: 'User registration with email & password',
-        listIndex: 1,
+        listIndex: 0,
         labels: ['lbl_feat'],
         description: 'Implement secure account registration with password hashing and session tokens.',
       },
       {
         title: 'Optimize card drag and drop performance',
-        listIndex: 2,
+        listIndex: 1,
         labels: ['lbl_perf'],
         description: 'Profile React re-renders during rapid drag sweeps across multiple columns.',
       },
       {
         title: 'Write automated unit tests for invite links',
-        listIndex: 3,
+        listIndex: 2,
         labels: ['lbl_infra'],
         description: 'Ensure token verification correctly adds member to project_members table.',
       },
       {
         title: 'Project architecture setup and Tailwind configuration',
-        listIndex: 4,
+        listIndex: 3,
         labels: ['lbl_infra'],
         description: 'Scaffold Vite project and set up responsive layout with dot grid canvas.',
       },
