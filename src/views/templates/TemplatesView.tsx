@@ -5,7 +5,7 @@ import { useBoard } from '../../context/BoardContext';
 import { INITIAL_TEMPLATES } from '../../data/initialData';
 
 export const TemplatesView: React.FC = () => {
-  const { useTemplate } = useBoard();
+  const { useTemplate, setActivePage, setActiveBoardId } = useBoard();
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [loadingTemplateId, setLoadingTemplateId] = useState<string | null>(null);
 
@@ -19,14 +19,21 @@ export const TemplatesView: React.FC = () => {
   const handleUseTemplate = async (templateId: string) => {
     setLoadingTemplateId(templateId);
     try {
-      await useTemplate(templateId);
-      confetti({
-        particleCount: 80,
-        spread: 60,
-        origin: { y: 0.5 },
-      });
+      const newBoardId = await useTemplate(templateId);
+      if (newBoardId) {
+        setActiveBoardId(newBoardId);
+      }
+      setActivePage('board');
+      try {
+        confetti({
+          particleCount: 80,
+          spread: 60,
+          origin: { y: 0.5 },
+        });
+      } catch {}
     } catch (e) {
-      console.error(e);
+      console.error('Failed to create board from template:', e);
+      setActivePage('board');
     } finally {
       setLoadingTemplateId(null);
     }

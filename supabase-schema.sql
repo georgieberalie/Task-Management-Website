@@ -55,6 +55,15 @@ create table if not exists public.project_members (
   unique(project_id, user_id)
 );
 
+-- 4. LISTS TABLE
+create table if not exists public.lists (
+  id uuid default gen_random_uuid() primary key,
+  project_id uuid references public.projects on delete cascade not null,
+  name text not null,
+  position integer default 0,
+  created_at timestamptz default now()
+);
+
 -- Auto-add project creator as 'owner' in project_members
 create or replace function public.handle_new_project()
 returns trigger as $$
@@ -72,15 +81,6 @@ begin
   return new;
 end;
 $$ language plpgsql security definer;
-
--- 4. LISTS TABLE
-create table if not exists public.lists (
-  id uuid default gen_random_uuid() primary key,
-  project_id uuid references public.projects on delete cascade not null,
-  name text not null,
-  position integer default 0,
-  created_at timestamptz default now()
-);
 
 drop trigger if exists on_project_created on public.projects;
 create trigger on_project_created
@@ -138,6 +138,7 @@ create policy "Allow users to update own profile" on public.profiles
 create policy "Users can view projects they are members of" on public.projects
   for select to authenticated using (
     id in (select project_id from public.project_members where user_id = auth.uid())
+    or created_by = auth.uid()
     or visibility = 'public'
   );
 

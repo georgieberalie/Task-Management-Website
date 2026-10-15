@@ -259,9 +259,12 @@ export const BoardProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setBoards(mappedBoards);
         setCards(mappedCards);
 
-        if (!mappedBoards.some((b) => b.id === activeBoardId)) {
-          setActiveBoardIdState(mappedBoards[0].id);
-        }
+        setActiveBoardIdState((prevId) => {
+          if (mappedBoards.some((b) => b.id === prevId)) {
+            return prevId;
+          }
+          return mappedBoards.length > 0 ? mappedBoards[0].id : prevId;
+        });
       } else {
         setBoards([]);
         setCards([]);
@@ -269,7 +272,7 @@ export const BoardProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch (err) {
       console.error('Failed to load projects from cloud:', err);
     }
-  }, [currentUser, activeBoardId]);
+  }, [currentUser]);
 
   useEffect(() => {
     refreshFromCloud();
@@ -389,25 +392,76 @@ export const BoardProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     description = ''
   ): Promise<string> => {
     if (isSupabaseConfigured && currentUser) {
-      const { data: newProj, error } = await supabase
-        .from('projects')
-        .insert({
-          title,
-          visibility,
-          description,
-          created_by: currentUser.id,
-        })
-        .select()
-        .single();
+      try {
+        const { data: newProj, error } = await supabase
+          .from('projects')
+          .insert({
+            title,
+            visibility,
+            description,
+            created_by: currentUser.id,
+          })
+          .select()
+          .single();
 
-      if (error) {
-        console.error('Error creating board in Supabase:', error);
-        throw error;
+        if (error || !newProj) {
+          throw error || new Error('Failed to create board in cloud');
+        }
+
+        // Ensure owner membership record
+        await supabase
+          .from('project_members')
+          .upsert(
+            {
+              project_id: newProj.id,
+              user_id: currentUser.id,
+              role: 'owner',
+            },
+            { onConflict: 'project_id,user_id' }
+          );
+
+        // Fetch lists created by trigger or set default ones
+        const { data: listsData } = await supabase
+          .from('lists')
+          .select('*')
+          .eq('project_id', newProj.id)
+          .order('position', { ascending: true });
+
+        const boardLists = (listsData && listsData.length > 0)
+          ? listsData.map((l) => ({
+              id: l.id,
+              boardId: l.project_id,
+              name: l.name,
+              position: l.position || 0,
+            }))
+          : [
+              { id: `lst_${newProj.id}_1`, boardId: newProj.id, name: 'To Do', position: 0 },
+              { id: `lst_${newProj.id}_2`, boardId: newProj.id, name: 'In Progress', position: 1 },
+              { id: `lst_${newProj.id}_3`, boardId: newProj.id, name: 'Done', position: 2 },
+            ];
+
+        const newBoard: Board = {
+          id: newProj.id,
+          title: newProj.title,
+          slug: newProj.title.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+          workspaceId: 'ws_cloud',
+          visibility: newProj.visibility as any,
+          isStarred: false,
+          createdAt: newProj.created_at,
+          description: newProj.description || '',
+          labels: INITIAL_LABELS,
+          createdBy: newProj.created_by,
+          lists: boardLists,
+        };
+
+        setBoards((prev) => [newBoard, ...prev.filter((b) => b.id !== newBoard.id)]);
+        setActiveBoardId(newProj.id);
+
+        refreshFromCloud().catch(console.error);
+        return newProj.id;
+      } catch (err) {
+        console.warn('Cloud board creation failed, falling back to local board:', err);
       }
-
-      await refreshFromCloud();
-      setActiveBoardId(newProj.id);
-      return newProj.id;
     }
 
     // Local fallback
@@ -861,64 +915,128 @@ export const BoardProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!tmpl) return activeBoardId;
 
     if (isSupabaseConfigured && currentUser) {
-      // 1. Create project
-      const { data: newProj, error: projErr } = await supabase
-        .from('projects')
-        .insert({
-          title: tmpl.name,
-          description: tmpl.description,
-          visibility: 'private',
-          created_by: currentUser.id,
-        })
-        .select()
-        .single();
-
-      if (projErr || !newProj) {
-        console.error('Failed to create template board in Supabase:', projErr);
-        throw projErr;
-      }
-
-      // 2. Remove default starter lists created by trigger if any
-      await supabase.from('lists').delete().eq('project_id', newProj.id);
-
-      // 3. Insert template's specific custom columns
-      const listInserts = tmpl.lists.map((name, idx) => ({
-        project_id: newProj.id,
-        name,
-        position: idx,
-      }));
-
-      const { data: createdLists } = await supabase
-        .from('lists')
-        .insert(listInserts)
-        .select();
-
-      // 4. Insert template's starter cards into corresponding columns
-      if (createdLists && createdLists.length > 0 && tmpl.sampleCards.length > 0) {
-        const sortedLists = [...createdLists].sort((a, b) => (a.position || 0) - (b.position || 0));
-        const cardInserts = tmpl.sampleCards.map((sc, idx) => {
-          const targetList = sortedLists[sc.listIndex] || sortedLists[0];
-          return {
-            project_id: newProj.id,
-            list_id: targetList.id,
-            title: sc.title,
-            description: sc.description || '',
-            position: idx,
-            labels: sc.labels,
+      try {
+        // 1. Create project
+        const { data: newProj, error: projErr } = await supabase
+          .from('projects')
+          .insert({
+            title: tmpl.name,
+            description: tmpl.description || '',
+            visibility: 'public',
             created_by: currentUser.id,
-          };
-        });
+          })
+          .select()
+          .single();
 
-        await supabase.from('cards').insert(cardInserts);
+        if (projErr || !newProj) {
+          throw projErr || new Error('Failed to create template board in cloud');
+        }
+
+        // Ensure owner membership
+        await supabase
+          .from('project_members')
+          .upsert(
+            {
+              project_id: newProj.id,
+              user_id: currentUser.id,
+              role: 'owner',
+            },
+            { onConflict: 'project_id,user_id' }
+          );
+
+        // 2. Remove default starter lists created by trigger if any
+        await supabase.from('lists').delete().eq('project_id', newProj.id);
+
+        // 3. Insert template's specific custom columns
+        const listInserts = tmpl.lists.map((name, idx) => ({
+          project_id: newProj.id,
+          name,
+          position: idx,
+        }));
+
+        const { data: createdLists } = await supabase
+          .from('lists')
+          .insert(listInserts)
+          .select();
+
+        let insertedCards: Card[] = [];
+
+        // 4. Insert template's starter cards into corresponding columns
+        if (createdLists && createdLists.length > 0 && tmpl.sampleCards.length > 0) {
+          const sortedLists = [...createdLists].sort((a, b) => (a.position || 0) - (b.position || 0));
+          const cardInserts = tmpl.sampleCards.map((sc, idx) => {
+            const targetList = sortedLists[sc.listIndex] || sortedLists[0];
+            return {
+              project_id: newProj.id,
+              list_id: targetList.id,
+              title: sc.title,
+              description: sc.description || '',
+              position: idx,
+              labels: sc.labels || [],
+              created_by: currentUser.id,
+            };
+          });
+
+          const { data: rawCards } = await supabase
+            .from('cards')
+            .insert(cardInserts)
+            .select();
+
+          if (rawCards) {
+            insertedCards = rawCards.map((c) => ({
+              id: c.id,
+              boardId: c.project_id,
+              listId: c.list_id,
+              title: c.title,
+              description: c.description || '',
+              position: c.position || 0,
+              dueDate: c.due_date,
+              labels: Array.isArray(c.labels) ? c.labels : [],
+              members: Array.isArray(c.members) ? c.members : [],
+              checklists: Array.isArray(c.checklists) ? c.checklists : [],
+              comments: [],
+              attachments: [],
+              activity: [],
+              createdAt: c.created_at,
+            }));
+          }
+        }
+
+        const sortedCreatedLists = (createdLists || []).sort((a, b) => (a.position || 0) - (b.position || 0));
+        const newBoard: Board = {
+          id: newProj.id,
+          title: newProj.title,
+          slug: newProj.title.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+          workspaceId: 'ws_cloud',
+          visibility: newProj.visibility as any,
+          isStarred: false,
+          createdAt: newProj.created_at,
+          description: newProj.description || '',
+          labels: INITIAL_LABELS,
+          createdBy: newProj.created_by,
+          lists: sortedCreatedLists.map((l) => ({
+            id: l.id,
+            boardId: l.project_id,
+            name: l.name,
+            position: l.position || 0,
+          })),
+        };
+
+        // Immediately update React state so the user sees the new board instantly
+        setBoards((prev) => [newBoard, ...prev.filter((b) => b.id !== newBoard.id)]);
+        setCards((prev) => [...prev.filter((c) => c.boardId !== newBoard.id), ...insertedCards]);
+        setActiveBoardIdState(newProj.id);
+        setActivePage('board');
+
+        // Refresh cloud in background
+        refreshFromCloud().catch(console.error);
+        return newProj.id;
+      } catch (cloudErr) {
+        console.warn('Cloud template creation failed or timed out. Falling back to local board:', cloudErr);
       }
-
-      await refreshFromCloud();
-      setActiveBoardIdState(newProj.id);
-      setActivePage('board');
-      return newProj.id;
     }
 
-    // Local fallback mode
+    // Local fallback mode (instant, offline-first)
     const newBoardId = 'brd_' + Math.random().toString(36).substring(2, 9);
     const newLists = tmpl.lists.map((name, idx) => ({
       id: `lst_${newBoardId}_${idx}`,
@@ -960,8 +1078,8 @@ export const BoardProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       };
     });
 
-    setBoards((prev) => [newBoard, ...prev]);
-    setCards((prev) => [...prev, ...newCards]);
+    setBoards((prev) => [newBoard, ...prev.filter((b) => b.id !== newBoard.id)]);
+    setCards((prev) => [...prev.filter((c) => c.boardId !== newBoard.id), ...newCards]);
     setActiveBoardIdState(newBoardId);
     setActivePage('board');
     return newBoardId;
