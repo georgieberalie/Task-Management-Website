@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-dark-50: #161616;
   --color-dark-100: #1c1c1c;
@@ -39,7 +41,7 @@ html, body, #root {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Custom scrollbars matching kan.bn */
+/* Custom scrollbars */
 ::-webkit-scrollbar {
   width: 7px;
   height: 7px;

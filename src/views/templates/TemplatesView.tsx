@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Layers, ArrowRight, CheckCircle2, Sparkles } from 'lucide-react';
+import { Layers, ArrowRight, CheckCircle2, Sparkles, Loader2, CheckSquare } from 'lucide-react';
+import confetti from 'canvas-confetti';
 import { useBoard } from '../../context/BoardContext';
 import { INITIAL_TEMPLATES } from '../../data/initialData';
 
 export const TemplatesView: React.FC = () => {
   const { useTemplate } = useBoard();
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [loadingTemplateId, setLoadingTemplateId] = useState<string | null>(null);
 
   const categories = ['All', 'Engineering', 'Product', 'Personal'];
 
@@ -14,8 +16,20 @@ export const TemplatesView: React.FC = () => {
       ? INITIAL_TEMPLATES
       : INITIAL_TEMPLATES.filter((t) => t.category === selectedCategory);
 
-  const handleUseTemplate = (templateId: string) => {
-    useTemplate(templateId);
+  const handleUseTemplate = async (templateId: string) => {
+    setLoadingTemplateId(templateId);
+    try {
+      await useTemplate(templateId);
+      confetti({
+        particleCount: 80,
+        spread: 60,
+        origin: { y: 0.5 },
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingTemplateId(null);
+    }
   };
 
   return (
@@ -31,7 +45,7 @@ export const TemplatesView: React.FC = () => {
             Board Templates
           </h1>
           <p className="text-xs text-light-800 dark:text-dark-800 mt-1">
-            Jumpstart your projects with battle-tested Kanban structures.
+            Jumpstart your projects with battle-tested workflows, custom column structures, and starter tasks.
           </p>
         </div>
 
@@ -64,9 +78,14 @@ export const TemplatesView: React.FC = () => {
                   <span className="rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">
                     {tmpl.category}
                   </span>
-                  <span className="text-[11px] text-light-800 dark:text-dark-800">
-                    {tmpl.lists.length} lists
-                  </span>
+                  <div className="flex items-center gap-2 text-[11px] text-light-800 dark:text-dark-800">
+                    <span>{tmpl.lists.length} columns</span>
+                    <span>•</span>
+                    <span className="flex items-center gap-1">
+                      <CheckSquare className="h-3 w-3 text-indigo-500" />
+                      {tmpl.sampleCards.length} starter tasks
+                    </span>
+                  </div>
                 </div>
 
                 <h3 className="text-base font-bold text-neutral-900 dark:text-dark-1000">
@@ -99,10 +118,20 @@ export const TemplatesView: React.FC = () => {
               <div className="mt-6 pt-3 border-t border-light-200 dark:border-dark-400/60 flex items-center justify-end">
                 <button
                   onClick={() => handleUseTemplate(tmpl.id)}
-                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500 transition-colors shadow-2xs"
+                  disabled={loadingTemplateId === tmpl.id}
+                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-60 transition-colors shadow-2xs"
                 >
-                  <span>Use this template</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
+                  {loadingTemplateId === tmpl.id ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Creating board...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Use this template</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </>
+                  )}
                 </button>
               </div>
             </div>

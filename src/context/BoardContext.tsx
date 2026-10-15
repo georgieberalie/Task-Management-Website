@@ -859,7 +859,112 @@ export const BoardProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const useTemplate = async (templateId: string): Promise<string> => {
     const tmpl = INITIAL_TEMPLATES.find((t) => t.id === templateId);
     if (!tmpl) return activeBoardId;
-    return await createBoard(tmpl.name, 'private', tmpl.description);
+
+    if (isSupabaseConfigured && currentUser) {
+      // 1. Create project
+      const { data: newProj, error: projErr } = await supabase
+        .from('projects')
+        .insert({
+          title: tmpl.name,
+          description: tmpl.description,
+          visibility: 'private',
+          created_by: currentUser.id,
+        })
+        .select()
+        .single();
+
+      if (projErr || !newProj) {
+        console.error('Failed to create template board in Supabase:', projErr);
+        throw projErr;
+      }
+
+      // 2. Remove default starter lists created by trigger if any
+      await supabase.from('lists').delete().eq('project_id', newProj.id);
+
+      // 3. Insert template's specific custom columns
+      const listInserts = tmpl.lists.map((name, idx) => ({
+        project_id: newProj.id,
+        name,
+        position: idx,
+      }));
+
+      const { data: createdLists } = await supabase
+        .from('lists')
+        .insert(listInserts)
+        .select();
+
+      // 4. Insert template's starter cards into corresponding columns
+      if (createdLists && createdLists.length > 0 && tmpl.sampleCards.length > 0) {
+        const sortedLists = [...createdLists].sort((a, b) => (a.position || 0) - (b.position || 0));
+        const cardInserts = tmpl.sampleCards.map((sc, idx) => {
+          const targetList = sortedLists[sc.listIndex] || sortedLists[0];
+          return {
+            project_id: newProj.id,
+            list_id: targetList.id,
+            title: sc.title,
+            description: sc.description || '',
+            position: idx,
+            labels: sc.labels,
+            created_by: currentUser.id,
+          };
+        });
+
+        await supabase.from('cards').insert(cardInserts);
+      }
+
+      await refreshFromCloud();
+      setActiveBoardIdState(newProj.id);
+      setActivePage('board');
+      return newProj.id;
+    }
+
+    // Local fallback mode
+    const newBoardId = 'brd_' + Math.random().toString(36).substring(2, 9);
+    const newLists = tmpl.lists.map((name, idx) => ({
+      id: `lst_${newBoardId}_${idx}`,
+      boardId: newBoardId,
+      name,
+      position: idx,
+    }));
+
+    const newBoard: Board = {
+      id: newBoardId,
+      title: tmpl.name,
+      slug: tmpl.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      workspaceId: workspace.id,
+      visibility: 'private',
+      isStarred: false,
+      createdAt: new Date().toISOString(),
+      description: tmpl.description,
+      labels: INITIAL_LABELS,
+      lists: newLists,
+    };
+
+    const newCards: Card[] = tmpl.sampleCards.map((sc, idx) => {
+      const targetList = newLists[sc.listIndex] || newLists[0];
+      return {
+        id: `crd_${newBoardId}_${idx}`,
+        boardId: newBoardId,
+        listId: targetList.id,
+        title: sc.title,
+        description: sc.description || '',
+        position: idx,
+        labels: sc.labels,
+        members: [],
+        dueDate: null,
+        checklists: [],
+        comments: [],
+        attachments: [],
+        activity: [],
+        createdAt: new Date().toISOString(),
+      };
+    });
+
+    setBoards((prev) => [newBoard, ...prev]);
+    setCards((prev) => [...prev, ...newCards]);
+    setActiveBoardIdState(newBoardId);
+    setActivePage('board');
+    return newBoardId;
   };
 
   return (
